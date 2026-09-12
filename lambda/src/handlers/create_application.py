@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from common.dynamo import put_application
 from common.transunion_client import fetch_credit_score
 from common import responses
+from common.logging_utils import log_invocation, logger
 
 
+@log_invocation
 def handler(event, context):
     try:
         body = json.loads(event.get("body") or "{}")
@@ -42,5 +44,5 @@ def handler(event, context):
         put_application(item)
         return responses.created(item)
     except Exception as err:  # noqa: BLE001
-        print(f"Failed to create application: {err}")
+        logger.error("Failed to create application: %s", err)
         return responses.internal_error("Failed to create application")

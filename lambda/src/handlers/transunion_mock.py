@@ -6,7 +6,10 @@
 # the sum of the userId's character codes, resulting in 700 or 500). A real
 # implementation would replace this with a call to the actual TransUnion API.
 
+from common.logging_utils import log_invocation
 
+
+@log_invocation
 def handler(event, context):
     user_id = event.get("userId", "")
     checksum = sum(ord(ch) for ch in user_id)
