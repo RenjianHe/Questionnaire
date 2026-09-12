@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Infrastructure layer — 数据层资源（DynamoDB）。
+  与 lambda/template.yaml（计算 + API 层）分开部署，
+  通过 CloudFormation Export/ImportValue 做跨栈引用。
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: 部署环境名，用于资源命名隔离
+
+  AppName:
+    Type: String
+    Default: questionnaire-app
+    Description: 应用名前缀，用于资源命名与导出值命名
+
+Resources:
+  ApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${AppName}-${Environment}-applications'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: applicationId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: applicationId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+Outputs:
+  ApplicationsTableName:
+    Description: DynamoDB 表名，lambda 栈通过 ImportValue 引用
+    Value: !Ref ApplicationsTable
+    Export:
+      Name: !Sub '${AppName}-${Environment}-TableName'
+
+  ApplicationsTableArn:
+    Description: DynamoDB 表 ARN，lambda 栈的 IAM 策略需要用到
+    Value: !GetAtt ApplicationsTable.Arn
+    Export:
+      Name: !Sub '${AppName}-${Environment}-TableArn'
