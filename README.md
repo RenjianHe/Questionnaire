@@ -4,42 +4,46 @@
 Client -> API Gateway -> Lambda(Create/Update/Get, Python) -> TransUnion(Mock Lambda) -> DynamoDB
 ```
 
-## 目录结构
+## Project structure
 
 ```
 project/
 ├── infrastructure/
-│   └── template.yaml        # 数据层：DynamoDB 表（独立部署的 CFN 栈）
+│   └── template.yaml        # Data layer: DynamoDB table (deployed as its own CFN stack)
 ├── lambda/
-│   ├── template.yaml        # 计算层：SAM 模板，隐式创建 API Gateway + 4 个 Lambda
+│   ├── template.yaml        # Compute layer: SAM template, implicitly creates API Gateway + 4 Lambdas
 │   └── src/
-│       ├── common/               # 共享代码（DynamoDB 封装 / TransUnion 调用 / HTTP 响应）
+│       ├── common/               # Shared code (DynamoDB wrapper / TransUnion client / HTTP responses)
 │       └── handlers/
 │           ├── create_application.py  # POST   /applications
 │           ├── update_application.py  # PUT    /applications/{applicationId}
 │           ├── get_application.py     # GET    /applications/{applicationId}
-│           └── transunion_mock.py     # 被前三者以 Lambda Invoke 方式调用，非 API 路由
-└── .github/workflows/deploy.yml # merge 到 main 后自动部署
+│           └── transunion_mock.py     # Invoked by the three handlers above via Lambda Invoke, not an API route
+└── .github/workflows/deploy.yml # Auto-deploys on merge to main
 ```
 
-两个 CloudFormation 栈：
+Two CloudFormation stacks:
 
-- **infrastructure 栈**只有 DynamoDB 表，先部署，导出表名给 lambda 栈用。
-- **lambda 栈**（CloudFormation + SAM Transform）负责 API Gateway（隐式创建）、4 个
-  Lambda 及其 IAM 权限，通过 `Fn::ImportValue` 引用 infra 栈导出的表名。
+- The **infrastructure stack** only contains the DynamoDB table. It's deployed first and
+  exports the table name for the lambda stack to consume.
+- The **lambda stack** (CloudFormation + SAM Transform) owns API Gateway (created implicitly),
+  the 4 Lambda functions, and their IAM permissions, referencing the table name exported by
+  the infra stack via `Fn::ImportValue`.
 
-四个 Lambda **共用同一份 `src/` 目录**（`CodeUri: src/`），靠不同的 `Handler`
-入口区分，没有用 Lambda Layer，也没有 `requirements.txt` —— `boto3` 是 Python
-Lambda 运行时自带的，项目没有其它第三方依赖，这样部署流程最少只需要
-`sam build && sam deploy` 两步，不涉及 npm/pip 安装、打层这些环节。
+All four Lambdas **share the same `src/` directory** (`CodeUri: src/`) and are distinguished
+only by their `Handler` entry point. There's no Lambda Layer and no `requirements.txt` —
+`boto3` ships with the Python Lambda runtime and this project has no other third-party
+dependencies, so the deployment flow is just `sam build && sam deploy`, with no npm/pip
+install or layer packaging steps involved.
 
-## TransUnion Mock 的行为
+## TransUnion Mock behavior
 
-`transunion_mock.py` 不挂在 API Gateway 上，是被 create/update 函数通过
-`boto3` 的 `lambda.invoke()` 同步调用的一个普通 Lambda：传入 `{"userId": ...}`，
-按 `userId` 字符累加值的奇偶性，稳定返回 `700` 或 `500` 的信用分（同一个
-userId 每次结果一致）。调用方拿到分数后连同 questionnaire 一起存进 DynamoDB
-的 `creditScore` 字段。
+`transunion_mock.py` isn't attached to API Gateway — it's a plain Lambda invoked
+synchronously by the create/update functions via `boto3`'s `lambda.invoke()`. Given
+`{"userId": ...}`, it returns a stable `700` or `500` credit score based on the parity of
+the sum of the userId's character codes (same userId always yields the same score). The
+caller stores that score together with the questionnaire into DynamoDB's `creditScore`
+field.
 
 ## API
 
@@ -50,7 +54,7 @@ userId 每次结果一致）。调用方拿到分数后连同 questionnaire 一�
   "questionnaire": { "income": 80000, "employmentStatus": "FULL_TIME" }
 }
 ```
-返回 201，body 里包含生成的 `applicationId`、`creditScore`（700 或 500）、`status: CREATED`。
+Returns 201 with the generated `applicationId`, `creditScore` (700 or 500), and `status: CREATED`.
 
 ### PUT /applications/{applicationId}
 ```json
@@ -58,42 +62,43 @@ userId 每次结果一致）。调用方拿到分数后连同 questionnaire 一�
   "questionnaire": { "income": 95000, "employmentStatus": "FULL_TIME" }
 }
 ```
-会重新调用一次 TransUnion(Mock) 拿 `creditScore`，`status` 变为 `UPDATED`。
-`applicationId` 不存在返回 404。
+Re-queries TransUnion (Mock) for `creditScore` and sets `status` to `UPDATED`.
+Returns 404 if `applicationId` doesn't exist.
 
 ### GET /applications/{applicationId}
-返回完整记录，不存在返回 404。
+Returns the full record, or 404 if it doesn't exist.
 
-## 部署（最简流程，假设你已经有 AWS 账户/AK-SK）
+## Deployment (simplest path, assuming you already have an AWS account/access keys)
 
-只需要两个 GitHub Secret：`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`
-（在仓库 Settings → Secrets and variables → Actions 里添加），不需要提前建
-S3 bucket、不需要配 OIDC 角色 —— workflow 里用的是 `sam deploy --resolve-s3`，
-SAM 会自动创建并托管一个部署用的 S3 bucket。
+Only two GitHub Secrets are needed: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+(add them under repo Settings → Secrets and variables → Actions). No need to pre-create
+an S3 bucket, and no need to set up an OIDC role — the workflow uses
+`sam deploy --resolve-s3`, which lets SAM create and manage a deployment S3 bucket
+automatically.
 
-push 到 `main` 分支即触发 `.github/workflows/deploy.yml`：
-1. `aws cloudformation deploy` 部署 `infrastructure/template.yaml`
-2. `sam build && sam deploy` 部署 `lambda/template.yaml`
+Pushing to `main` triggers `.github/workflows/deploy.yml`:
+1. `aws cloudformation deploy` deploys `infrastructure/template.yaml`
+2. `sam build && sam deploy` deploys `lambda/template.yaml`
 
-### 本地手动部署（可选，用于第一次验证）
+### Manual local deployment (optional, for first-time verification)
 
 ```bash
-# 1. 数据层
+# 1. Data layer
 aws cloudformation deploy \
   --template-file infrastructure/template.yaml \
   --stack-name questionnaire-app-infra-dev \
   --parameter-overrides Environment=dev AppName=questionnaire-app
 
-# 2. 计算层
+# 2. Compute layer
 cd lambda
 sam build
 sam deploy --guided --resolve-s3
 ```
 
-`sam deploy --guided` 只在第一次跑的时候需要，之后它会把参数记在
-`lambda/samconfig.toml` 里（已加入 `.gitignore`，不提交）。
+`sam deploy --guided` is only needed the first time — after that it records the
+parameters in `lambda/samconfig.toml` (already in `.gitignore`, not committed).
 
-## 本地调试
+## Local debugging
 
 ```bash
 cd lambda
@@ -104,6 +109,7 @@ curl -X POST http://127.0.0.1:3000/applications \
   -d '{"applicant":{"userId":"u-001"},"questionnaire":{"income":80000}}'
 ```
 
-> `sam local` 里跑到 create/update 函数会真的去 invoke 已部署到云上的
-> `TransUnionMockFunction`（需要本机有正确的 AWS 凭证）。如果想完全离线调试，
-> 可以在 `common/transunion_client.py` 里临时 mock 掉 `fetch_credit_score`。
+> When running locally, the create/update functions will actually invoke the
+> already-deployed `TransUnionMockFunction` in the cloud (requires valid AWS credentials
+> on your machine). For fully offline debugging, temporarily mock out
+> `fetch_credit_score` in `common/transunion_client.py`.

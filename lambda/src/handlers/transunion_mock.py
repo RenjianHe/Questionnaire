@@ -1,8 +1,10 @@
-# 被 create/update 函数以 Lambda Invoke（RequestResponse）方式同步调用，
-# 不挂在 API Gateway 上，入参/出参就是普通 dict，不是 API Gateway 事件格式。
+# Invoked synchronously (Lambda Invoke, RequestResponse) by the create/update
+# functions — not attached to API Gateway. Input/output are plain dicts, not
+# API Gateway event format.
 #
-# 规则：同一个 userId 每次查询结果稳定（用 userId 的哈希奇偶性决定 700 或 500），
-# 真实实现应替换为对 TransUnion 官方 API 的调用。
+# Rule: the result for a given userId is stable (determined by the parity of
+# the sum of the userId's character codes, resulting in 700 or 500). A real
+# implementation would replace this with a call to the actual TransUnion API.
 
 
 def handler(event, context):

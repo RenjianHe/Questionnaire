@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Lambda + API Gateway 层（Python）。依赖 infrastructure/template.yaml 已部署导出的
-  DynamoDB 表名（ImportValue）。SAM 会隐式创建一个 API Gateway REST API，
-  三个业务 Lambda 通过 Events 绑定到对应的路由上。
+  Lambda + API Gateway layer (Python). Depends on the DynamoDB table name
+  exported by infrastructure/template.yaml (via ImportValue). SAM implicitly
+  creates an API Gateway REST API; the three business Lambdas are bound
+  to their routes via Events.
 
 Parameters:
   Environment:
@@ -20,9 +21,10 @@ Globals:
     Runtime: python3.12
     Timeout: 10
     MemorySize: 256
-    # 四个函数共用同一份代码目录（src/），彼此靠 Handler 区分入口，
-    # 不需要 Lambda Layer / 不需要 requirements.txt —— boto3 是 Python
-    # Lambda 运行时自带的，这个项目没有用到其它第三方依赖。
+    # All four functions share the same code directory (src/) and are
+    # distinguished only by Handler. No Lambda Layer, no requirements.txt —
+    # boto3 ships with the Python Lambda runtime and this project has no
+    # other third-party dependencies.
     CodeUri: src/
     Environment:
       Variables:
@@ -32,15 +34,16 @@ Globals:
 
 Resources:
   # ---------------------------------------------------------------------
-  # Mock TransUnion 服务：被 Create / Update 函数以同步方式 Invoke，
-  # 不挂 API Gateway。按 userId 稳定返回 700 或 500。
+  # Mock TransUnion service: invoked synchronously by the Create/Update
+  # functions, not attached to API Gateway. Returns a stable 700 or 500
+  # credit score based on userId.
   # ---------------------------------------------------------------------
   TransUnionMockFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AppName}-${Environment}-transunion-mock'
       Handler: handlers.transunion_mock.handler
-      Description: 模拟 TransUnion，按 userId 返回 700 或 500 的信用分
+      Description: Mocks TransUnion, returns a credit score of 700 or 500 based on userId
 
   ApplicationsApi:
     Type: AWS::Serverless::Api
@@ -52,7 +55,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AppName}-${Environment}-create-application'
       Handler: handlers.create_application.handler
-      Description: POST /applications - 创建 questionnaire 申请并调用 TransUnion(Mock)
+      Description: POST /applications - creates a questionnaire application and calls TransUnion (Mock)
       Environment:
         Variables:
           TRANSUNION_FUNCTION_NAME: !Ref TransUnionMockFunction
@@ -75,7 +78,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AppName}-${Environment}-update-application'
       Handler: handlers.update_application.handler
-      Description: PUT /applications/{applicationId} - 更新 questionnaire，重新查询 TransUnion(Mock)
+      Description: PUT /applications/{applicationId} - updates the questionnaire and re-queries TransUnion (Mock)
       Environment:
         Variables:
           TRANSUNION_FUNCTION_NAME: !Ref TransUnionMockFunction
@@ -98,7 +101,7 @@ Resources:
     Properties:
       FunctionName: !Sub '${AppName}-${Environment}-get-application'
       Handler: handlers.get_application.handler
-      Description: GET /applications/{applicationId} - 查询已有申请
+      Description: GET /applications/{applicationId} - fetches an existing application
       Policies:
         - DynamoDBReadPolicy:
             TableName: !ImportValue
@@ -113,5 +116,5 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
-    Description: API Gateway 基础 URL
+    Description: API Gateway base URL
     Value: !Sub 'https://${ApplicationsApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'

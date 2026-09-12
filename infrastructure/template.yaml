@@ -1,20 +1,20 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Infrastructure layer — 数据层资源（DynamoDB）。
-  与 lambda/template.yaml（计算 + API 层）分开部署，
-  通过 CloudFormation Export/ImportValue 做跨栈引用。
+  Infrastructure layer — data layer resources (DynamoDB).
+  Deployed separately from lambda/template.yaml (compute + API layer),
+  cross-stack references are done via CloudFormation Export/ImportValue.
 
 Parameters:
   Environment:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
-    Description: 部署环境名，用于资源命名隔离
+    Description: Deployment environment name, used to isolate resource naming
 
   AppName:
     Type: String
     Default: questionnaire-app
-    Description: 应用名前缀，用于资源命名与导出值命名
+    Description: Application name prefix, used for resource and export naming
 
 Resources:
   ApplicationsTable:
@@ -37,13 +37,13 @@ Resources:
 
 Outputs:
   ApplicationsTableName:
-    Description: DynamoDB 表名，lambda 栈通过 ImportValue 引用
+    Description: DynamoDB table name, referenced by the lambda stack via ImportValue
     Value: !Ref ApplicationsTable
     Export:
       Name: !Sub '${AppName}-${Environment}-TableName'
 
   ApplicationsTableArn:
-    Description: DynamoDB 表 ARN，lambda 栈的 IAM 策略需要用到
+    Description: DynamoDB table ARN, needed by the lambda stack's IAM policies
     Value: !GetAtt ApplicationsTable.Arn
     Export:
       Name: !Sub '${AppName}-${Environment}-TableArn'

@@ -11,17 +11,17 @@ def handler(event, context):
     try:
         body = json.loads(event.get("body") or "{}")
     except json.JSONDecodeError:
-        return responses.bad_request("请求体不是合法 JSON")
+        return responses.bad_request("Request body is not valid JSON")
 
     applicant = body.get("applicant")
     questionnaire = body.get("questionnaire")
 
     if not applicant or not questionnaire:
-        return responses.bad_request("请求体必须包含 applicant 和 questionnaire 字段")
+        return responses.bad_request("Request body must include applicant and questionnaire fields")
 
     user_id = applicant.get("userId") if isinstance(applicant, dict) else None
     if not user_id:
-        return responses.bad_request("applicant 必须包含 userId 字段")
+        return responses.bad_request("applicant must include a userId field")
 
     try:
         application_id = str(uuid.uuid4())
@@ -42,5 +42,5 @@ def handler(event, context):
         put_application(item)
         return responses.created(item)
     except Exception as err:  # noqa: BLE001
-        print(f"创建 application 失败: {err}")
-        return responses.internal_error("创建 application 失败")
+        print(f"Failed to create application: {err}")
+        return responses.internal_error("Failed to create application")

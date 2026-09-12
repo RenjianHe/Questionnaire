@@ -14,7 +14,7 @@ def fetch_credit_score(user_id: str) -> int:
     )
 
     if "FunctionError" in response:
-        raise RuntimeError(f"TransUnion mock 调用失败: {response['FunctionError']}")
+        raise RuntimeError(f"TransUnion mock invocation failed: {response['FunctionError']}")
 
     payload = json.loads(response["Payload"].read())
     return payload["creditScore"]

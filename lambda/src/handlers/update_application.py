@@ -9,28 +9,28 @@ from common import responses
 def handler(event, context):
     application_id = (event.get("pathParameters") or {}).get("applicationId")
     if not application_id:
-        return responses.bad_request("缺少 applicationId 路径参数")
+        return responses.bad_request("Missing applicationId path parameter")
 
     try:
         body = json.loads(event.get("body") or "{}")
     except json.JSONDecodeError:
-        return responses.bad_request("请求体不是合法 JSON")
+        return responses.bad_request("Request body is not valid JSON")
 
     questionnaire = body.get("questionnaire")
     if not questionnaire:
-        return responses.bad_request("请求体必须包含 questionnaire 字段")
+        return responses.bad_request("Request body must include a questionnaire field")
 
     try:
         existing = get_application(application_id)
         if not existing:
-            return responses.not_found(f"application {application_id} 不存在")
+            return responses.not_found(f"application {application_id} does not exist")
 
         applicant = body.get("applicant") or existing.get("applicant")
         user_id = applicant.get("userId") if isinstance(applicant, dict) else None
         if not user_id:
-            return responses.bad_request("applicant 必须包含 userId 字段")
+            return responses.bad_request("applicant must include a userId field")
 
-        # questionnaire 变更后重新拉取一次 TransUnion 信用分
+        # Re-fetch the TransUnion credit score whenever the questionnaire changes
         credit_score = fetch_credit_score(user_id)
         now = datetime.now(timezone.utc).isoformat()
 
@@ -38,6 +38,6 @@ def handler(event, context):
         return responses.ok(updated)
     except Exception as err:  # noqa: BLE001
         if type(err).__name__ == "ConditionalCheckFailedException":
-            return responses.not_found(f"application {application_id} 不存在")
-        print(f"更新 application 失败: {err}")
-        return responses.internal_error("更新 application 失败")
+            return responses.not_found(f"application {application_id} does not exist")
+        print(f"Failed to update application: {err}")
+        return responses.internal_error("Failed to update application")
