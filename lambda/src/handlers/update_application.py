@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 
 from common.dynamo import get_application, update_application
 from common.transunion_client import fetch_credit_score
+from common.logging_utils import log_invocation, logger
 from common import responses
 
 
+@log_invocation
 def handler(event, context):
     application_id = (event.get("pathParameters") or {}).get("applicationId")
     if not application_id:
@@ -39,5 +41,5 @@ def handler(event, context):
     except Exception as err:  # noqa: BLE001
         if type(err).__name__ == "ConditionalCheckFailedException":
             return responses.not_found(f"application {application_id} does not exist")
-        print(f"Failed to update application: {err}")
+        logger.error("Failed to update application: %s", err)
         return responses.internal_error("Failed to update application")
