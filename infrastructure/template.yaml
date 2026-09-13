@@ -35,7 +35,7 @@ Resources:
       SSESpecification:
         SSEEnabled: true
       KinesisStreamSpecification:
-        StreamArn: arn:aws:kinesis:us-east-1:<account-id>:stream/questionnaire-app-dev-raw-events
+        StreamArn: arn:aws:kinesis:us-east-1:496327537890:stream/questionnaire-app-dev-raw-events
 
 Outputs:
   ApplicationsTableName:
