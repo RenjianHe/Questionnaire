@@ -2,10 +2,10 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from common.dynamo import put_application
+from common.dynamo import put_application_for_user, UserAlreadyExistsError
 from common.transunion_client import fetch_credit_score
-from common import responses
 from common.logging_utils import log_invocation, logger
+from common import responses
 
 
 @log_invocation
@@ -41,8 +41,10 @@ def handler(event, context):
             "updatedAt": now,
         }
 
-        put_application(item)
+        put_application_for_user(item, user_id)
         return responses.created(item)
+    except UserAlreadyExistsError as err:
+        return responses.conflict(str(err))
     except Exception as err:  # noqa: BLE001
         logger.error("Failed to create application: %s", err)
         return responses.internal_error("Failed to create application")

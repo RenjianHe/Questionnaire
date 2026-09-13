@@ -49,6 +49,37 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
+      Auth:
+        ApiKeyRequired: true
+
+  # Requires clients to send a valid `x-api-key` header on every request.
+  # The actual key value is only shown once at creation time — retrieve it
+  # with: aws apigateway get-api-key --api-key <ApiKeyId> --include-value --query value --output text
+  ApplicationsApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn: ApplicationsApi
+    Properties:
+      Name: !Sub '${AppName}-${Environment}-api-key'
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref ApplicationsApi
+          StageName: !Ref Environment
+
+  ApplicationsUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: ApplicationsApi
+    Properties:
+      UsagePlanName: !Sub '${AppName}-${Environment}-usage-plan'
+      ApiStages:
+        - ApiId: !Ref ApplicationsApi
+          Stage: !Ref Environment
+
+  ApplicationsUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApplicationsApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref ApplicationsUsagePlan
 
   CreateApplicationFunction:
     Type: AWS::Serverless::Function
@@ -118,3 +149,9 @@ Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
     Value: !Sub 'https://${ApplicationsApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  ApiKeyId:
+    Description: >
+      API Key ID. Get the actual key value with:
+      aws apigateway get-api-key --api-key <this value> --include-value --query value --output text
+    Value: !Ref ApplicationsApiKey
