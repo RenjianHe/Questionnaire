@@ -1,10 +1,8 @@
 # Environment variables must be set before any handler/common module is
-# imported, because common/dynamo.py and common/transunion_client.py read
-# them at import time (module-level os.environ[...]).
+# imported, because common/dynamo.py reads it at import time.
 import os
 
 os.environ.setdefault("TABLE_NAME", "test-applications-table")
-os.environ.setdefault("TRANSUNION_FUNCTION_NAME", "test-transunion-mock")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")

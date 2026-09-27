@@ -9,8 +9,7 @@ def test_get_existing_application(dynamodb_table):
         "applicationId": "abc-123",
         "applicant": {"userId": "u-001"},
         "questionnaire": {"income": 80000},
-        "creditScore": 700,
-        "status": "CREATED",
+        "status": "PENDING",
         "createdAt": "2026-01-01T00:00:00+00:00",
         "updatedAt": "2026-01-01T00:00:00+00:00",
     }
@@ -22,7 +21,7 @@ def test_get_existing_application(dynamodb_table):
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
     assert body["applicationId"] == "abc-123"
-    assert body["creditScore"] == 700
+    assert body["status"] == "PENDING"
 
 
 def test_get_missing_application(dynamodb_table):

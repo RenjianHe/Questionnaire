@@ -11,7 +11,7 @@ def _seed_application():
         "applicant": {"userId": "u-001"},
         "questionnaire": {"income": 80000},
         "creditScore": 500,
-        "status": "CREATED",
+        "status": "APPROVED",
         "createdAt": "2026-01-01T00:00:00+00:00",
         "updatedAt": "2026-01-01T00:00:00+00:00",
     }
@@ -19,8 +19,8 @@ def _seed_application():
     return item
 
 
-@patch("handlers.update_application.fetch_credit_score", return_value=700)
-def test_update_application_success(mock_fetch, dynamodb_table):
+@patch("handlers.update_application.publish_decision_request")
+def test_update_application_success(mock_publish, dynamodb_table):
     _seed_application()
 
     event = {
@@ -31,10 +31,10 @@ def test_update_application_success(mock_fetch, dynamodb_table):
 
     assert response["statusCode"] == 200
     body = json.loads(response["body"])
-    assert body["creditScore"] == 700
-    assert body["status"] == "UPDATED"
+    assert body["status"] == "PENDING"
     assert body["questionnaire"]["income"] == 95000
-    mock_fetch.assert_called_once_with("u-001")
+    assert "creditScore" not in body
+    mock_publish.assert_called_once_with(body["applicationId"], body["updatedAt"])
 
 
 def test_update_application_not_found(dynamodb_table):

@@ -36,7 +36,7 @@ jobs:
           pip install -r requirements-dev.txt
           pytest -v
 
-      # Step 1: deploy the data layer (DynamoDB)
+      # Step 1: deploy data, ECR, and worker networking infrastructure
       - name: Deploy infra stack
         run: |
           aws cloudformation deploy \
@@ -45,7 +45,22 @@ jobs:
             --parameter-overrides Environment=${{ env.ENVIRONMENT }} AppName=${{ env.APP_NAME }} \
             --no-fail-on-empty-changeset
 
-      # Step 2: deploy the compute layer (Lambda + API Gateway)
+      - name: Build and push decision engine worker image
+        id: decision-engine-image
+        run: |
+          ECR_REPOSITORY_URI=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.INFRA_STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='DecisionEngineRepositoryUri'].OutputValue" \
+            --output text)
+          ECR_REGISTRY=$(printf '%s' "$ECR_REPOSITORY_URI" | cut -d/ -f1)
+          IMAGE_URI="${ECR_REPOSITORY_URI}:${GITHUB_SHA}"
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker build -f lambda/Dockerfile -t "$IMAGE_URI" lambda
+          docker push "$IMAGE_URI"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      # Step 2: deploy API Lambdas and the decision engine Fargate service
       - name: Install AWS SAM CLI
         run: pip install aws-sam-cli
 
@@ -61,6 +76,6 @@ jobs:
             --resolve-s3 \
             --capabilities CAPABILITY_IAM \
             --region ${{ env.AWS_REGION }} \
-            --parameter-overrides Environment=${{ env.ENVIRONMENT }} AppName=${{ env.APP_NAME }} \
+            --parameter-overrides Environment=${{ env.ENVIRONMENT }} AppName=${{ env.APP_NAME }} DecisionEngineImageUri=${{ steps.decision-engine-image.outputs.image_uri }} \
             --no-fail-on-empty-changeset \
             --no-confirm-changeset
