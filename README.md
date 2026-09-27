@@ -1,8 +1,8 @@
 # Questionnaire Application Service
 
 ```
-Client -> API Gateway (API key required) -> Lambda(Create/Update/Get, Python)
-       -> TransUnion(Mock Lambda) -> DynamoDB
+Client -> API Gateway (API key required) -> Lambda(Create/Update/Get, Python) -> DynamoDB
+       -> SNS -> SQS -> decision engine Fargate worker -> DynamoDB
 ```
 
 ## Project structure
@@ -12,7 +12,9 @@ project/
 ├── infrastructure/
 │   └── template.yaml        # Data layer: DynamoDB table (deployed as its own CFN stack)
 ├── lambda/
-│   ├── template.yaml        # Compute layer: SAM template — API Gateway + 4 Lambdas + API key/usage plan
+│   ├── template.yaml        # Compute layer: SAM — API Gateway/Lambdas + decision engine ECS/Fargate service
+│   ├── Dockerfile           # Decision engine worker container image
+│   ├── requirements.txt     # Decision engine worker runtime dependencies
 │   ├── pytest.ini
 │   ├── requirements-dev.txt # Test-only deps (pytest, moto, boto3) — never shipped to Lambda
 │   ├── tests/
@@ -20,38 +22,43 @@ project/
 │   │   ├── test_create_application.py
 │   │   ├── test_update_application.py
 │   │   ├── test_get_application.py
-│   │   └── test_transunion_mock.py
+│   │   └── test_decision_engine.py
 │   └── src/
-│       ├── common/               # DynamoDB wrapper / TransUnion client / HTTP responses / logging
+│       ├── common/               # DynamoDB wrapper / decision publisher / HTTP responses / logging
 │       └── handlers/
 │           ├── create_application.py  # POST   /applications
 │           ├── update_application.py  # PUT    /applications/{applicationId}
 │           ├── get_application.py     # GET    /applications/{applicationId}
-│           └── transunion_mock.py     # Invoked via Lambda Invoke, not an API route
+│           ├── decision_engine.py     # Decision logic
+│           └── worker.py              # Long-polling SQS process for ECS
 └── .github/workflows/deploy.yml # Runs tests, then deploys on merge to main
 ```
 
 Two CloudFormation stacks:
 
-- The **infrastructure stack** only contains the DynamoDB table. It's deployed first and
-  exports the table name for the lambda stack to consume.
-- The **lambda stack** (CloudFormation + SAM Transform) owns API Gateway (created implicitly),
-  the 4 Lambda functions, and their IAM permissions, referencing the table name exported by
-  the infra stack via `Fn::ImportValue`.
+- the **infrastructure stack** contains DynamoDB, the decision engine ECR repository, and networking
+  for the worker's public subnets. It's deployed first and exports resource names to the
+  compute stack.
+- the **lambda stack** (CloudFormation + SAM Transform) owns API Gateway (created implicitly),
+  the API Lambdas, SNS/SQS resources, and the ECS/Fargate decision engine service and its IAM roles.
 
-All four Lambdas **share the same `src/` directory** (`CodeUri: src/`) and are distinguished
-only by their `Handler` entry point. There's no Lambda Layer and no runtime
-`requirements.txt` — `boto3` ships with the Python Lambda runtime and this project has no
-other third-party dependencies at runtime.
+The API Lambdas share `src/` (`CodeUri: src/`). The decision engine worker is packaged as a Docker
+image and runs as an ECS Fargate service.
 
-## TransUnion Mock behavior
+## Asynchronous decision engine
 
-`transunion_mock.py` isn't attached to API Gateway — it's a plain Lambda invoked
-synchronously by the create/update functions via `boto3`'s `lambda.invoke()`. Given
-`{"userId": ...}`, it returns a stable `700` or `500` credit score based on the parity of
-the sum of the userId's character codes (same userId always yields the same score). The
-caller stores that score together with the questionnaire into DynamoDB's `creditScore`
-field.
+Create and update write the application to DynamoDB with `status: PENDING`, then publish
+its application ID and update timestamp to SNS. SNS delivers the event to an SQS queue,
+which is long-polled by a separate ECS Fargate worker service (one task minimum, five
+maximum). A visible backlog of 10 or more messages triggers scale-out; CPU target tracking
+scales the service back in when the workers become idle. The worker reads the current questionnaire
+and sets status to `DECLINED` when `income` is below 50000, `APPROVED` at or above 50000,
+and leaves it `PENDING` when `income` is missing. Stale requests are ignored so an older
+decision cannot overwrite a more recent questionnaire update. Failed messages retry and
+are routed to a dead-letter queue after five receives. The service runs in public subnets
+with no inbound security-group rules and needs outbound HTTPS access to AWS APIs.
+
+The decision engine currently applies the configured rules locally.
 
 ## One application per userId
 
@@ -76,7 +83,8 @@ All endpoints require an `x-api-key` header (see **Authentication** below).
   "questionnaire": { "income": 80000, "employmentStatus": "FULL_TIME" }
 }
 ```
-Returns 201 with the generated `applicationId`, `creditScore` (700 or 500), and `status: CREATED`.
+Returns 201 with the generated `applicationId` and `status: PENDING`. The final decision
+is applied asynchronously and is available through GET.
 Returns 409 if an application already exists for this `userId` — each `userId` can only
 have one application (enforced with a conditional write in DynamoDB, see below).
 
@@ -86,7 +94,8 @@ have one application (enforced with a conditional write in DynamoDB, see below).
   "questionnaire": { "income": 95000, "employmentStatus": "FULL_TIME" }
 }
 ```
-Re-queries TransUnion (Mock) for `creditScore` and sets `status` to `UPDATED`.
+Sets `status` to `PENDING`, publishes a new decision request, and returns without
+waiting for the decision.
 Returns 404 if `applicationId` doesn't exist.
 
 ### GET /applications/{applicationId}
@@ -122,7 +131,7 @@ reaches the Lambda function.
 
 ## Logging
 
-Every handler (including `transunion_mock`) is wrapped with the `@log_invocation`
+API handlers are wrapped with the `@log_invocation`
 decorator from `common/logging_utils.py`, which logs the full incoming event and the full
 outgoing response to CloudWatch — regardless of which code path returns. Tail it with:
 
@@ -135,8 +144,8 @@ You'll see `REQUEST: {...}` and `RESPONSE: {...}` log lines for each invocation.
 ## Unit tests
 
 Tests live in `lambda/tests/` and use `pytest` + `moto` (mocks DynamoDB — no AWS account,
-no deployed stack, no network calls needed). The TransUnion call is stubbed with
-`unittest.mock.patch` instead of actually invoking a Lambda.
+no deployed stack, no network calls needed). SNS publishing is stubbed in API tests, and
+the decision engine is tested against the mocked table.
 
 ```bash
 cd lambda
@@ -145,13 +154,16 @@ pytest -v
 ```
 
 Covers: successful create/update/get, missing/invalid request bodies, missing `userId`,
-application-not-found (404), and TransUnion mock stability/range. CI (`deploy.yml`) runs
-this same `pytest` step before touching AWS — a failing test blocks deployment.
+application-not-found (404), decision thresholds, missing income, and stale requests.
+CI (`deploy.yml`) runs this same `pytest` step before touching AWS — a failing test blocks deployment.
 
 ## Deployment (simplest path, assuming you already have an AWS account/access keys)
 
-Only two GitHub Secrets are needed: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
-(add them under repo Settings → Secrets and variables → Actions). No need to pre-create
+The GitHub Actions identity needs CloudFormation/SAM deployment permissions, permission to
+pass the ECS task roles and create the Application Auto Scaling service-linked role, and ECR
+image upload permissions (`ecr:GetAuthorizationToken` plus repository upload actions). Configure
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` under repo Settings → Secrets and variables
+→ Actions. No need to pre-create
 an S3 bucket, and no need to set up an OIDC role — the workflow uses
 `sam deploy --resolve-s3`, which lets SAM create and manage a deployment S3 bucket
 automatically.
@@ -159,7 +171,8 @@ automatically.
 Pushing to `main` triggers `.github/workflows/deploy.yml`:
 1. Install deps and run `pytest`
 2. `aws cloudformation deploy` deploys `infrastructure/template.yaml`
-3. `sam build && sam deploy` deploys `lambda/template.yaml`
+3. CI builds and pushes the decision engine worker image to ECR
+4. `sam build && sam deploy` deploys the API Lambdas and Fargate service in `lambda/template.yaml`
 
 ### Manual local deployment (optional, for first-time verification)
 
@@ -176,8 +189,10 @@ sam build
 sam deploy --guided --resolve-s3
 ```
 
-`sam deploy --guided` is only needed the first time — after that it records the
-parameters in `lambda/samconfig.toml` (already in `.gitignore`, not committed).
+For manual deployment, build and push an image to the ECR repository exported by the
+infrastructure stack, then pass its immutable URI as the `DecisionEngineImageUri` parameter to
+`sam deploy`. `sam deploy --guided` is only needed the first time — after that it records
+the parameters in `lambda/samconfig.toml` (already in `.gitignore`, not committed).
 
 ## Local debugging against deployed AWS resources
 
@@ -191,6 +206,5 @@ curl -X POST http://127.0.0.1:3000/applications \
 ```
 
 > `sam local` bypasses the API key check (it's an API Gateway feature, not enforced
-> locally), and the create/update functions will actually invoke the already-deployed
-> `TransUnionMockFunction` in the cloud (requires valid AWS credentials on your machine).
-> For fully offline testing, use the `pytest` suite above instead.
+> locally). Create/update publish decision requests to the deployed SNS topic; for fully
+> offline testing, use the `pytest` suite above instead.

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Infrastructure layer — data layer resources (DynamoDB).
+  Infrastructure layer — data layer and decision engine container image resources.
   Deployed separately from lambda/template.yaml (compute + API layer),
   cross-stack references are done via CloudFormation Export/ImportValue.
 
@@ -17,6 +17,74 @@ Parameters:
     Description: Application name prefix, used for resource and export naming
 
 Resources:
+  DecisionEngineRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${AppName}-${Environment}-decision-engine'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+
+  DecisionEngineVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppName}-${Environment}-decision-engine'
+
+  DecisionEngineInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  DecisionEngineVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DecisionEngineVpc
+      InternetGatewayId: !Ref DecisionEngineInternetGateway
+
+  DecisionEnginePublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DecisionEngineVpc
+
+  DecisionEnginePublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: DecisionEngineVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref DecisionEnginePublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DecisionEngineInternetGateway
+
+  DecisionEnginePublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DecisionEngineVpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.42.1.0/24
+      MapPublicIpOnLaunch: true
+
+  DecisionEnginePublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DecisionEngineVpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.42.2.0/24
+      MapPublicIpOnLaunch: true
+
+  DecisionEnginePublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DecisionEnginePublicSubnetA
+      RouteTableId: !Ref DecisionEnginePublicRouteTable
+
+  DecisionEnginePublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DecisionEnginePublicSubnetB
+      RouteTableId: !Ref DecisionEnginePublicRouteTable
+
   ApplicationsTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -49,3 +117,22 @@ Outputs:
     Value: !GetAtt ApplicationsTable.Arn
     Export:
       Name: !Sub '${AppName}-${Environment}-TableArn'
+
+  DecisionEngineRepositoryUri:
+    Description: ECR image repository used by the decision engine Fargate service
+    Value: !GetAtt DecisionEngineRepository.RepositoryUri
+
+  DecisionEngineVpcId:
+    Value: !Ref DecisionEngineVpc
+    Export:
+      Name: !Sub '${AppName}-${Environment}-DecisionEngineVpcId'
+
+  DecisionEnginePublicSubnetA:
+    Value: !Ref DecisionEnginePublicSubnetA
+    Export:
+      Name: !Sub '${AppName}-${Environment}-DecisionEnginePublicSubnetA'
+
+  DecisionEnginePublicSubnetB:
+    Value: !Ref DecisionEnginePublicSubnetB
+    Export:
+      Name: !Sub '${AppName}-${Environment}-DecisionEnginePublicSubnetB'

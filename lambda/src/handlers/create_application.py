@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from common.dynamo import put_application_for_user, UserAlreadyExistsError
-from common.transunion_client import fetch_credit_score
+from common.decision_engine_client import publish_decision_request
 from common.logging_utils import log_invocation, logger
 from common import responses
 
@@ -29,19 +29,17 @@ def handler(event, context):
         application_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
-        credit_score = fetch_credit_score(user_id)
-
         item = {
             "applicationId": application_id,
             "applicant": applicant,
             "questionnaire": questionnaire,
-            "creditScore": credit_score,
-            "status": "CREATED",
+            "status": "PENDING",
             "createdAt": now,
             "updatedAt": now,
         }
 
         put_application_for_user(item, user_id)
+        publish_decision_request(application_id, now)
         return responses.created(item)
     except UserAlreadyExistsError as err:
         return responses.conflict(str(err))

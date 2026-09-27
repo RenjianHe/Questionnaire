@@ -4,8 +4,8 @@ from unittest.mock import patch
 from handlers import create_application
 
 
-@patch("handlers.create_application.fetch_credit_score", return_value=700)
-def test_create_application_success(mock_fetch, dynamodb_table):
+@patch("handlers.create_application.publish_decision_request")
+def test_create_application_success(mock_publish, dynamodb_table):
     event = {
         "body": json.dumps(
             {
@@ -19,10 +19,9 @@ def test_create_application_success(mock_fetch, dynamodb_table):
 
     assert response["statusCode"] == 201
     body = json.loads(response["body"])
-    assert body["creditScore"] == 700
-    assert body["status"] == "CREATED"
+    assert body["status"] == "PENDING"
     assert "applicationId" in body
-    mock_fetch.assert_called_once_with("u-001")
+    mock_publish.assert_called_once_with(body["applicationId"], body["updatedAt"])
 
 
 def test_create_application_missing_fields(dynamodb_table):
@@ -50,8 +49,8 @@ def test_create_application_invalid_json(dynamodb_table):
     assert response["statusCode"] == 400
 
 
-@patch("handlers.create_application.fetch_credit_score", return_value=700)
-def test_create_application_duplicate_user_id_returns_conflict(mock_fetch, dynamodb_table):
+@patch("handlers.create_application.publish_decision_request")
+def test_create_application_duplicate_user_id_returns_conflict(mock_publish, dynamodb_table):
     event = {
         "body": json.dumps(
             {
@@ -68,3 +67,4 @@ def test_create_application_duplicate_user_id_returns_conflict(mock_fetch, dynam
     assert second_response["statusCode"] == 409
     body = json.loads(second_response["body"])
     assert "u-dup" in body["message"]
+    assert mock_publish.call_count == 1

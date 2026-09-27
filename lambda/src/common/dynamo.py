@@ -46,26 +46,46 @@ def put_application_for_user(item: dict, user_id: str) -> dict:
     return item
 
 
-def get_application(application_id: str) -> dict | None:
-    result = _table.get_item(Key={"applicationId": application_id})
+def get_application(application_id: str, consistent_read: bool = False) -> dict | None:
+    result = _table.get_item(
+        Key={"applicationId": application_id},
+        ConsistentRead=consistent_read,
+    )
     return result.get("Item")
 
 
-def update_application(application_id: str, questionnaire: dict, credit_score: int, status: str, now: str) -> dict:
+def update_application(application_id: str, questionnaire: dict, status: str, now: str) -> dict:
     result = _table.update_item(
         Key={"applicationId": application_id},
         ConditionExpression="attribute_exists(applicationId)",
         UpdateExpression=(
-            "SET questionnaire = :questionnaire, creditScore = :creditScore, "
-            "#status = :status, updatedAt = :updatedAt"
+            "SET questionnaire = :questionnaire, #status = :status, updatedAt = :updatedAt "
+            "REMOVE creditScore"
         ),
         ExpressionAttributeNames={"#status": "status"},
         ExpressionAttributeValues={
             ":questionnaire": questionnaire,
-            ":creditScore": credit_score,
             ":status": status,
             ":updatedAt": now,
         },
         ReturnValues="ALL_NEW",
     )
     return result["Attributes"]
+
+
+def update_application_status(application_id: str, status: str, expected_updated_at: str) -> bool:
+    try:
+        _table.update_item(
+            Key={"applicationId": application_id},
+            ConditionExpression="attribute_exists(applicationId) AND updatedAt = :expected_updated_at",
+            UpdateExpression="SET #status = :status",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":expected_updated_at": expected_updated_at,
+                ":status": status,
+            },
+        )
+    except _table.meta.client.exceptions.ConditionalCheckFailedException:
+        return False
+
+    return True
