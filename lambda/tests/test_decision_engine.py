@@ -103,13 +103,65 @@ def test_worker_only_deletes_successfully_processed_messages():
 
     sqs_client = FakeSqsClient()
 
-    def process_batch(event):
-        assert [r["messageId"] for r in event["Records"]] == ["ok", "retry"]
-        return {"batchItemFailures": [{"itemIdentifier": "retry"}]}
+    processed_batches = []
 
-    with patch("handlers.worker.process_sqs_batch", side_effect=process_batch):
+    def process_batch(event):
+        message_ids = [r["messageId"] for r in event["Records"]]
+        processed_batches.append(message_ids)
+        if len(processed_batches) == 1:
+            assert message_ids == ["ok", "retry"]
+            return {"batchItemFailures": [{"itemIdentifier": "retry"}]}
+        assert message_ids == ["retry"]
+        return {"batchItemFailures": []}
+
+    with (
+        patch("handlers.worker.process_sqs_batch", side_effect=process_batch),
+        patch("handlers.worker.time.sleep") as sleep,
+    ):
         worker.poll_once(sqs_client, "queue-url")
 
+    assert processed_batches == [["ok", "retry"], ["retry"]]
+    sleep.assert_called_once_with(1)
     assert sqs_client.deleted == [
-        {"QueueUrl": "queue-url", "ReceiptHandle": "receipt-ok"}
+        {"QueueUrl": "queue-url", "ReceiptHandle": "receipt-ok"},
+        {"QueueUrl": "queue-url", "ReceiptHandle": "receipt-retry"},
     ]
+
+
+def test_worker_leaves_message_undeleted_after_immediate_retries_are_exhausted():
+    class FakeSqsClient:
+        def __init__(self):
+            self.deleted = []
+
+        def receive_message(self, **kwargs):
+            return {
+                "Messages": [
+                    {
+                        "MessageId": "retry",
+                        "Body": "{}",
+                        "ReceiptHandle": "receipt-retry",
+                    }
+                ]
+            }
+
+        def delete_message(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    sqs_client = FakeSqsClient()
+
+    def process_batch(event):
+        return {
+            "batchItemFailures": [
+                {"itemIdentifier": event["Records"][0]["messageId"]}
+            ]
+        }
+
+    with (
+        patch("handlers.worker.process_sqs_batch", side_effect=process_batch) as process,
+        patch("handlers.worker.time.sleep") as sleep,
+    ):
+        worker.poll_once(sqs_client, "queue-url")
+
+    assert process.call_count == 4
+    assert [call.args for call in sleep.call_args_list] == [(1,), (2,), (4,)]
+    assert sqs_client.deleted == []

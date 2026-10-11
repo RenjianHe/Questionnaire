@@ -4,3 +4,10 @@ __pycache__/
 samconfig.toml
 *.log
 flowchart
+generate_analysis_doc.py
+questionnaire_code_analysis.docx
+.codex-build/
+openapi.json
+openapi.yaml
+pyrightconfig.json
+slides-output/

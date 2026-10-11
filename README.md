@@ -54,11 +54,27 @@ maximum). A visible backlog of 10 or more messages triggers scale-out; CPU targe
 scales the service back in when the workers become idle. The worker reads the current questionnaire
 and sets status to `DECLINED` when `income` is below 50000, `APPROVED` at or above 50000,
 and leaves it `PENDING` when `income` is missing. Stale requests are ignored so an older
-decision cannot overwrite a more recent questionnaire update. Failed messages retry and
-are routed to a dead-letter queue after five receives. The service runs in public subnets
-with no inbound security-group rules and needs outbound HTTPS access to AWS APIs.
+decision cannot overwrite a more recent questionnaire update. Failed messages are retried
+immediately up to three times with 1-, 2-, and 4-second delays; any remaining failure
+is left in SQS for redelivery and is routed to a dead-letter queue after five receives.
+The service runs in public subnets with no inbound security-group rules and needs
+outbound HTTPS access to AWS APIs.
 
 The decision engine currently applies the configured rules locally.
+
+## Change data capture (analytics)
+
+`ApplicationsTable` has DynamoDB Streams enabled (`NEW_AND_OLD_IMAGES`), and the infra stack
+exports the stream ARN as `${AppName}-${Environment}-ApplicationsStreamArn`. The separate
+`data-streaming` repo consumes it:
+
+```
+DynamoDB Streams -> Lambda forwarder -> MSK Serverless -> Spark on EMR Serverless (hourly) -> Snowflake
+```
+
+Nothing in this repo depends on that pipeline. Keep the stream and the export in place, because
+the `data-streaming` stack imports the export, and CloudFormation blocks removing an export while
+another stack imports it.
 
 ## One application per userId
 

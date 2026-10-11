@@ -1,13 +1,34 @@
 import json
 from decimal import Decimal, InvalidOperation
+from typing import Any, Literal, TypedDict
 
 from common.dynamo import get_application, update_application_status
 from common.logging_utils import logger
 
+ApplicationStatus = Literal["PENDING", "APPROVED", "DECLINED"]
+
+
+class SqsRecord(TypedDict):
+    messageId: str
+    body: str
+
+
+class SqsBatchEvent(TypedDict):
+    Records: list[SqsRecord]
+
+
+class BatchItemFailure(TypedDict):
+    itemIdentifier: str
+
+
+class SqsBatchResponse(TypedDict):
+    batchItemFailures: list[BatchItemFailure]
+
+
 _DECLINE_THRESHOLD = Decimal("50000")
 
 
-def _status_for_income(income) -> str:
+def _status_for_income(income: Any) -> ApplicationStatus:
     if income is None:
         return "PENDING"
     if isinstance(income, bool):
@@ -23,8 +44,8 @@ def _status_for_income(income) -> str:
     return "DECLINED" if amount < _DECLINE_THRESHOLD else "APPROVED"
 
 
-def process_sqs_batch(event):
-    batch_item_failures = []
+def process_sqs_batch(event: SqsBatchEvent) -> SqsBatchResponse:
+    batch_item_failures: list[BatchItemFailure] = []
 
     for record in event.get("Records", []):
         message_id = record["messageId"]
