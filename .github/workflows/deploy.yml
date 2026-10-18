@@ -20,8 +20,8 @@ jobs:
           python-version: '3.12'
       - run: |
           python -m pip install -r lambda/requirements-dev.txt
-          pytest -v --junitxml=unit-tests.xml --cov=lambda/src --cov-report=term-missing
-          bandit -r lambda/src -ll -f screen
+          python -m pytest -c lambda/pytest.ini -v --junitxml=unit-tests.xml --cov=lambda/src --cov-report=term-missing
+          python -m bandit -r lambda/src -ll -f screen
   deploy:
     needs: quality
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
