@@ -6,6 +6,10 @@ Description: >
   creates an API Gateway REST API; the three business Lambdas are bound
   to their routes via Events.
 
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@2
+
 Parameters:
   Environment:
     Type: String
@@ -184,9 +188,7 @@ Resources:
       ServiceName: !Sub '${AppName}-${Environment}-decision-engine'
       Cluster: !Ref DecisionEngineCluster
       TaskDefinition: !Ref DecisionEngineTaskDefinition
-      # Keep the ECS service deployed without an always-on task. The backlog
-      # alarm can scale it out when work arrives.
-      DesiredCount: 0
+      DesiredCount: 1
       LaunchType: FARGATE
       PlatformVersion: LATEST
       DeploymentConfiguration:
@@ -208,7 +210,7 @@ Resources:
     DependsOn: DecisionEngineService
     Properties:
       MaxCapacity: 5
-      MinCapacity: 0
+      MinCapacity: 1
       ResourceId: !Sub 'service/${DecisionEngineCluster}/${AppName}-${Environment}-decision-engine'
       RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
       ScalableDimension: ecs:service:DesiredCount
@@ -275,22 +277,22 @@ Resources:
   # with: aws apigateway get-api-key --api-key <ApiKeyId> --include-value --query value --output text
   ApplicationsApiKey:
     Type: AWS::ApiGateway::ApiKey
-    DependsOn: ApplicationsApi
     Properties:
       Name: !Sub '${AppName}-${Environment}-api-key'
       Enabled: true
       StageKeys:
         - RestApiId: !Ref ApplicationsApi
-          StageName: !Ref Environment
+          # Ref the generated stage so CloudFormation waits for its creation.
+          StageName: !Ref ApplicationsApi.Stage
 
   ApplicationsUsagePlan:
     Type: AWS::ApiGateway::UsagePlan
-    DependsOn: ApplicationsApi
     Properties:
       UsagePlanName: !Sub '${AppName}-${Environment}-usage-plan'
       ApiStages:
         - ApiId: !Ref ApplicationsApi
-          Stage: !Ref Environment
+          # The REST API alone can exist before its stage is ready.
+          Stage: !Ref ApplicationsApi.Stage
 
   ApplicationsUsagePlanKey:
     Type: AWS::ApiGateway::UsagePlanKey
