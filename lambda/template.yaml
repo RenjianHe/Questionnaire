@@ -184,7 +184,9 @@ Resources:
       ServiceName: !Sub '${AppName}-${Environment}-decision-engine'
       Cluster: !Ref DecisionEngineCluster
       TaskDefinition: !Ref DecisionEngineTaskDefinition
-      DesiredCount: 1
+      # Keep the ECS service deployed without an always-on task. The backlog
+      # alarm can scale it out when work arrives.
+      DesiredCount: 0
       LaunchType: FARGATE
       PlatformVersion: LATEST
       DeploymentConfiguration:
@@ -206,7 +208,7 @@ Resources:
     DependsOn: DecisionEngineService
     Properties:
       MaxCapacity: 5
-      MinCapacity: 1
+      MinCapacity: 0
       ResourceId: !Sub 'service/${DecisionEngineCluster}/${AppName}-${Environment}-decision-engine'
       RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
       ScalableDimension: ecs:service:DesiredCount
