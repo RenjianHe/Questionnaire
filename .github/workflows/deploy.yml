@@ -1,81 +1,54 @@
-name: Deploy to AWS
-
+name: Deploy questionnaire to AWS
 on:
   push:
     branches: [main]
-
+  pull_request:
+    branches: [main]
 env:
   AWS_REGION: us-east-1
   APP_NAME: questionnaire-app
   ENVIRONMENT: dev
   INFRA_STACK_NAME: questionnaire-app-infra-dev
   LAMBDA_STACK_NAME: questionnaire-app-lambda-dev
-
 jobs:
-  deploy:
+  quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip install -r lambda/requirements-dev.txt
+          pytest -v --junitxml=unit-tests.xml --cov=lambda/src --cov-report=term-missing
+          bandit -r lambda/src -ll -f screen
+  deploy:
+    needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      # Run unit tests before touching AWS — a failing test blocks deployment
-      - name: Run unit tests
-        working-directory: lambda
+      - run: aws cloudformation deploy --template-file infrastructure/template.yaml --stack-name "$INFRA_STACK_NAME" --parameter-overrides Environment="$ENVIRONMENT" AppName="$APP_NAME" --region "$AWS_REGION" --no-fail-on-empty-changeset
+      - id: image
         run: |
-          pip install -r requirements-dev.txt
-          pytest -v
+          uri=$(aws cloudformation describe-stacks --stack-name "$INFRA_STACK_NAME" --region "$AWS_REGION" --query "Stacks[0].Outputs[?OutputKey=='DecisionEngineRepositoryUri'].OutputValue" --output text)
+          registry=$(printf '%s' "$uri" | cut -d/ -f1)
+          image="${uri}:${GITHUB_SHA}"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+          docker build -f lambda/Dockerfile -t "$image" lambda
+          docker push "$image"
+          echo "image_uri=$image" >> "$GITHUB_OUTPUT"
+      - run: python -m pip install aws-sam-cli
+      - working-directory: lambda
+        run: sam build --template-file template.yaml
+      - working-directory: lambda
+        run: sam deploy --template-file .aws-sam/build/template.yaml --stack-name "$LAMBDA_STACK_NAME" --resolve-s3 --capabilities CAPABILITY_IAM --region "$AWS_REGION" --parameter-overrides Environment="$ENVIRONMENT" AppName="$APP_NAME" DecisionEngineImageUri="${{ steps.image.outputs.image_uri }}" --no-fail-on-empty-changeset --no-confirm-changeset
 
-      # Step 1: deploy data, ECR, and worker networking infrastructure
-      - name: Deploy infra stack
-        run: |
-          aws cloudformation deploy \
-            --template-file infrastructure/template.yaml \
-            --stack-name ${{ env.INFRA_STACK_NAME }} \
-            --parameter-overrides Environment=${{ env.ENVIRONMENT }} AppName=${{ env.APP_NAME }} \
-            --no-fail-on-empty-changeset
-
-      - name: Build and push decision engine worker image
-        id: decision-engine-image
-        run: |
-          ECR_REPOSITORY_URI=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.INFRA_STACK_NAME }} \
-            --query "Stacks[0].Outputs[?OutputKey=='DecisionEngineRepositoryUri'].OutputValue" \
-            --output text)
-          ECR_REGISTRY=$(printf '%s' "$ECR_REPOSITORY_URI" | cut -d/ -f1)
-          IMAGE_URI="${ECR_REPOSITORY_URI}:${GITHUB_SHA}"
-          aws ecr get-login-password --region "${{ env.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-          docker build -f lambda/Dockerfile -t "$IMAGE_URI" lambda
-          docker push "$IMAGE_URI"
-          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
-
-      # Step 2: deploy API Lambdas and the decision engine Fargate service
-      - name: Install AWS SAM CLI
-        run: pip install aws-sam-cli
-
-      - name: sam build
-        working-directory: lambda
-        run: sam build
-
-      - name: sam deploy
-        working-directory: lambda
-        run: |
-          sam deploy \
-            --stack-name ${{ env.LAMBDA_STACK_NAME }} \
-            --resolve-s3 \
-            --capabilities CAPABILITY_IAM \
-            --region ${{ env.AWS_REGION }} \
-            --parameter-overrides Environment=${{ env.ENVIRONMENT }} AppName=${{ env.APP_NAME }} DecisionEngineImageUri=${{ steps.decision-engine-image.outputs.image_uri }} \
-            --no-fail-on-empty-changeset \
-            --no-confirm-changeset
