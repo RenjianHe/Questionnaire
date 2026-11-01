@@ -41,14 +41,18 @@ jobs:
         run: |
           uri=$(aws cloudformation describe-stacks --stack-name "$INFRA_STACK_NAME" --region "$AWS_REGION" --query "Stacks[0].Outputs[?OutputKey=='DecisionEngineRepositoryUri'].OutputValue" --output text)
           registry=$(printf '%s' "$uri" | cut -d/ -f1)
+          repository="${uri#*/}"
           image="${uri}:${GITHUB_SHA}"
-          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
-          docker build -f lambda/Dockerfile -t "$image" lambda
-          docker push "$image"
+          if aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$GITHUB_SHA" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Image $GITHUB_SHA already exists, skipping build and push"
+          else
+            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+            docker build -f lambda/Dockerfile -t "$image" lambda
+            docker push "$image"
+          fi
           echo "image_uri=$image" >> "$GITHUB_OUTPUT"
       - run: python -m pip install aws-sam-cli
       - working-directory: lambda
         run: sam build --template-file template.yaml
       - working-directory: lambda
         run: sam deploy --template-file .aws-sam/build/template.yaml --stack-name "$LAMBDA_STACK_NAME" --resolve-s3 --capabilities CAPABILITY_IAM --region "$AWS_REGION" --parameter-overrides Environment="$ENVIRONMENT" AppName="$APP_NAME" DecisionEngineImageUri="${{ steps.image.outputs.image_uri }}" --no-fail-on-empty-changeset --no-confirm-changeset
-
