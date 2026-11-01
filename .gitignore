@@ -11,3 +11,4 @@ openapi.json
 openapi.yaml
 pyrightconfig.json
 slides-output/
+.DS_Store

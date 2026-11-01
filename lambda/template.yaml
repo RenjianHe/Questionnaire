@@ -6,6 +6,10 @@ Description: >
   creates an API Gateway REST API; the three business Lambdas are bound
   to their routes via Events.
 
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@2
+
 Parameters:
   Environment:
     Type: String
@@ -273,22 +277,22 @@ Resources:
   # with: aws apigateway get-api-key --api-key <ApiKeyId> --include-value --query value --output text
   ApplicationsApiKey:
     Type: AWS::ApiGateway::ApiKey
-    DependsOn: ApplicationsApi
     Properties:
       Name: !Sub '${AppName}-${Environment}-api-key'
       Enabled: true
       StageKeys:
         - RestApiId: !Ref ApplicationsApi
-          StageName: !Ref Environment
+          # Ref the generated stage so CloudFormation waits for its creation.
+          StageName: !Ref ApplicationsApi.Stage
 
   ApplicationsUsagePlan:
     Type: AWS::ApiGateway::UsagePlan
-    DependsOn: ApplicationsApi
     Properties:
       UsagePlanName: !Sub '${AppName}-${Environment}-usage-plan'
       ApiStages:
         - ApiId: !Ref ApplicationsApi
-          Stage: !Ref Environment
+          # The REST API alone can exist before its stage is ready.
+          Stage: !Ref ApplicationsApi.Stage
 
   ApplicationsUsagePlanKey:
     Type: AWS::ApiGateway::UsagePlanKey
