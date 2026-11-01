@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Infrastructure layer — data layer and decision engine container image resources.
   Deployed separately from lambda/template.yaml (compute + API gateway layer),
-  cross-stack references are done via CloudFormation Export/ImportValue.
+  cross-stack references are done via CloudFormation Export/Import Value.
 
 Parameters:
   Environment:
